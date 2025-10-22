@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Loading...</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f4f7f6;
+            color: #333;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            min-height: 100vh;
+        }
+
+        .container {
+            background-color: #ffffff;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+            padding: 30px;
+            max-width: 800px;
+            width: 100%;
+            text-align: center;
+            margin-top: 50px;
+        }
+
+        h1 {
+            color: #2c3e50;
+            margin-bottom: 25px;
+            font-size: 2.2em;
+            border-bottom: 2px solid #e0e0e0;
+            padding-bottom: 15px;
+        }
+
+        h2 {
+            color: #34495e;
+            margin-top: 30px;
+            margin-bottom: 20px;
+            font-size: 1.6em;
+        }
+
+        h3 {
+            color: #3498db;
+            margin-top: 25px;
+            margin-bottom: 10px;
+            font-size: 1.3em;
+            border-bottom: 1px dashed #e0e0e0;
+            padding-bottom: 5px;
+        }
+
+        p {
+            font-size: 1.1em;
+            line-height: 1.6;
+            margin-bottom: 8px;
+        }
+
+        span {
+            font-weight: bold;
+            color: #2980b9;
+        }
+
+        #error-message {
+            color: #e74c3c;
+            background-color: #fdd;
+            border: 1px solid #e74c3c;
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 20px;
+            font-weight: bold;
+            display: none; /* Hidden by default */
+        }
+
+        .loading-text {
+            color: #7f8c8d;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 id="share-entity-name" class="loading-text">Loading Entity Name...</h1>
+
+        <section>
+            <h2>Shares Outstanding (Fiscal Year > 2020)</h2>
+
+            <h3>Maximum Value</h3>
+            <p>Value: <span id="share-max-value" class="loading-text">Loading...</span></p>
+            <p>Fiscal Year: <span id="share-max-fy" class="loading-text">Loading...</span></p>
+
+            <h3>Minimum Value</h3>
+            <p>Value: <span id="share-min-value" class="loading-text">Loading...</span></p>
+            <p>Fiscal Year: <span id="share-min-fy" class="loading-text">Loading...</span></p>
+        </section>
+
+        <p id="error-message" class="error-message"></p>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const DEFAULT_CIK = '0000915912'; // AvalonBay Communities
+            const PROXY_URL = 'https://api.allorigins.win/raw?url='; // Generic public proxy
+
+            /**
+             * Fetches company concept data from the SEC API.
+             * Uses a proxy to handle User-Agent requirements for client-side fetches.
+             * @param {string} cik - The CIK (Central Index Key) of the company.
+             * @returns {Promise<Object>} A promise that resolves to the JSON data from SEC.
+             */
+            async function fetchCompanyData(cik) {
+                const secApiUrl = `https://data.sec.gov/api/xbrl/companyconcept/CIK${cik}/dei/EntityCommonStockSharesOutstanding.json`;
+                const finalUrl = `${PROXY_URL}${encodeURIComponent(secApiUrl)}`;
+
+                try {
+                    // Browser JavaScript cannot directly set the User-Agent header for security reasons.
+                    // The SEC API requires a descriptive User-Agent. A proxy is used here to bypass
+                    // this browser limitation and allow the proxy server to handle the User-Agent
+                    // for the request made to SEC.gov.
+                    const response = await fetch(finalUrl);
+
+                    if (!response.ok) {
+                        const errorText = await response.text();
+                        throw new Error(`HTTP error! Status: ${response.status}. Details: ${errorText}`);
+                    }
+                    return await response.json();
+                } catch (error) {
+                    console.error('Failed to fetch company data:', error);
+                    document.getElementById('error-message').textContent = `Failed to fetch data for CIK ${cik}: ${error.message}. Please verify the CIK or try again later.`;
+                    document.getElementById('error-message').style.display = 'block';
+                    throw error; // Re-throw to propagate the error down the promise chain
+                }
+            }
+
+            /**
+             * Processes raw SEC data to extract entity name and filtered min/max share values.
+             * @param {Object} rawData - The raw JSON data fetched from the SEC API.
+             * @returns {Object} An object structured like `data.json` with entityName, max, and min.
+             */
+            function processCompanyData(rawData) {
+                const entityName = rawData.entityName || 'Unknown Entity';
+                const sharesData = rawData.units && rawData.units.shares ? rawData.units.shares : [];
+
+                let maxVal = -Infinity;
+                let minVal = Infinity;
+                let maxFy = null;
+                let minFy = null;
+
+                const filteredShares = sharesData.filter(entry => {
+                    // Filter for fiscal years (fy) greater than "2020" and numeric 'val'.
+                    // String comparison for 'fy' works for 'YYYY' format (e.g., "2021" > "2020").
+                    return entry.fy > "2020" && typeof entry.val === 'number';
+                });
+
+                if (filteredShares.length === 0) {
+                    return {
+                        entityName: entityName,
+                        max: { val: null, fy: null },
+                        min: { val: null, fy: null }
+                    };
+                }
+
+                filteredShares.forEach(entry => {
+                    if (entry.val > maxVal) {
+                        maxVal = entry.val;
+                        maxFy = entry.fy;
+                    }
+                    if (entry.val < minVal) {
+                        minVal = entry.val;
+                        minFy = entry.fy;
+                    }
+                });
+
+                return {
+                    entityName: entityName,
+                    max: { val: maxVal, fy: maxFy },
+                    min: { val: minVal, fy: minFy }
+                };
+            }
+
+            /**
+             * Updates the HTML elements with the processed company data.
+             * @param {Object} processedData - The data object containing entityName, max, and min values.
+             */
+            function updateUI(processedData) {
+                document.title = `${processedData.entityName} - Shares Outstanding`;
+                document.getElementById('share-entity-name').textContent = processedData.entityName;
+
+                // Max values
+                document.getElementById('share-max-value').textContent = processedData.max.val !== null ? processedData.max.val.toLocaleString() : 'N/A';
+                document.getElementById('share-max-fy').textContent = processedData.max.fy || 'N/A';
+
+                // Min values
+                document.getElementById('share-min-value').textContent = processedData.min.val !== null ? processedData.min.val.toLocaleString() : 'N/A';
+                document.getElementById('share-min-fy').textContent = processedData.min.fy || 'N/A';
+
+                // Remove loading text styling once content is loaded
+                Array.from(document.querySelectorAll('.loading-text')).forEach(el => {
+                    el.classList.remove('loading-text');
+                });
+
+                document.getElementById('error-message').style.display = 'none'; // Hide error if successful
+            }
+
+            /**
+             * Initializes the page by determining the CIK and fetching/displaying data.
+             */
+            async function initializePage() {
+                const urlParams = new URLSearchParams(window.location.search);
+                const cikParam = urlParams.get('CIK');
+                const currentCik = cikParam && /^\d{10}$/.test(cikParam) ? cikParam : DEFAULT_CIK;
+
+                try {
+                    const rawData = await fetchCompanyData(currentCik);
+                    const processedData = processCompanyData(rawData);
+                    updateUI(processedData);
+                } catch (error) {
+                    // Error message already handled by fetchCompanyData
+                    console.error('Page initialization failed:', error);
+                    // Clear displayed data or set to N/A if an error occurs
+                    updateUI({
+                        entityName: 'Error Loading Data',
+                        max: { val: null, fy: null },
+                        min: { val: null, fy: null }
+                    });
+                }
+            }
+
+            initializePage();
+        });
+    </script>
+</body>
+</html>
